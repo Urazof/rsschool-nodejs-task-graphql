@@ -118,45 +118,37 @@ export function createLoaders(prisma: PrismaClient): LoadersContext {
       const needsUserSubscribedTo = 'userSubscribedTo' in fields;
       const needsSubscribedToUser = 'subscribedToUser' in fields;
 
+      interface UserWithSubs extends User {
+        userSubscribedTo?: Array<{ authorId: string; subscriberId: string; author: User }>;
+        subscribedToUser?: Array<{ authorId: string; subscriberId: string; subscriber: User }>;
+      }
+
       interface UserInclude {
-        userSubscribedTo?: boolean;
-        subscribedToUser?: boolean;
+        userSubscribedTo?: { include: { author: true } };
+        subscribedToUser?: { include: { subscriber: true } };
       }
 
       const include: UserInclude = {};
       if (needsUserSubscribedTo) {
-        include.userSubscribedTo = true;
+        include.userSubscribedTo = { include: { author: true } };
       }
       if (needsSubscribedToUser) {
-        include.subscribedToUser = true;
+        include.subscribedToUser = { include: { subscriber: true } };
       }
 
       const users = await prisma.user.findMany({
         include: Object.keys(include).length > 0 ? include : undefined,
-      });
+      }) as UserWithSubs[];
 
       users.forEach((user) => {
-
-        if (needsUserSubscribedTo && 'userSubscribedTo' in user) {
-          const userSubs = user.userSubscribedTo as Array<{ authorId: string; subscriberId: string }>;
-          const subscribedToUsers = userSubs.map((sub) => sub.authorId);
-          const subscribedUsers = users.filter((u) => subscribedToUsers.includes(u.id));
+        if (needsUserSubscribedTo && user.userSubscribedTo) {
+          const subscribedUsers = user.userSubscribedTo.map((sub) => sub.author);
           userSubscribedToLoader.prime(user.id, subscribedUsers);
-
-          subscribedUsers.forEach((u) => {
-            subscribedToUserLoader.clear(u.id);
-          });
         }
 
-        if (needsSubscribedToUser && 'subscribedToUser' in user) {
-          const subToUser = user.subscribedToUser as Array<{ authorId: string; subscriberId: string }>;
-          const subscribers = subToUser.map((sub) => sub.subscriberId);
-          const subscriberUsers = users.filter((u) => subscribers.includes(u.id));
+        if (needsSubscribedToUser && user.subscribedToUser) {
+          const subscriberUsers = user.subscribedToUser.map((sub) => sub.subscriber);
           subscribedToUserLoader.prime(user.id, subscriberUsers);
-
-          subscriberUsers.forEach((u) => {
-            userSubscribedToLoader.clear(u.id);
-          });
         }
       });
 
