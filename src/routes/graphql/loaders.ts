@@ -119,38 +119,49 @@ export function createLoaders(prisma: PrismaClient): LoadersContext {
       const needsSubscribedToUser = 'subscribedToUser' in fields;
 
       interface UserWithSubs extends User {
-        userSubscribedTo?: Array<{ authorId: string; subscriberId: string; author: User }>;
-        subscribedToUser?: Array<{ authorId: string; subscriberId: string; subscriber: User }>;
+        userSubscribedTo?: Array<{ authorId: string; subscriberId: string }>;
+        subscribedToUser?: Array<{ authorId: string; subscriberId: string }>;
       }
 
       interface UserInclude {
-        userSubscribedTo?: { include: { author: true } };
-        subscribedToUser?: { include: { subscriber: true } };
+        userSubscribedTo?: boolean;
+        subscribedToUser?: boolean;
       }
 
       const include: UserInclude = {};
       if (needsUserSubscribedTo) {
-        include.userSubscribedTo = { include: { author: true } };
+        include.userSubscribedTo = true;
       }
       if (needsSubscribedToUser) {
-        include.subscribedToUser = { include: { subscriber: true } };
+        include.subscribedToUser = true;
       }
 
       const users = await prisma.user.findMany({
         include: Object.keys(include).length > 0 ? include : undefined,
       }) as UserWithSubs[];
 
-      users.forEach((user) => {
-        if (needsUserSubscribedTo && user.userSubscribedTo) {
-          const subscribedUsers = user.userSubscribedTo.map((sub) => sub.author);
-          userSubscribedToLoader.prime(user.id, subscribedUsers);
-        }
+      // Prime the individual loaders with the included relation data
+      if (needsUserSubscribedTo || needsSubscribedToUser) {
+        // Create a map of all users by ID for efficient lookup
+        const userMap = new Map(users.map((u) => [u.id, u]));
 
-        if (needsSubscribedToUser && user.subscribedToUser) {
-          const subscriberUsers = user.subscribedToUser.map((sub) => sub.subscriber);
-          subscribedToUserLoader.prime(user.id, subscriberUsers);
-        }
-      });
+        // Prime the loaders using users from the same query result
+        users.forEach((user) => {
+          if (needsUserSubscribedTo && user.userSubscribedTo) {
+            const subscribedUsers = user.userSubscribedTo
+              .map((sub) => userMap.get(sub.authorId))
+              .filter((u): u is User => u !== undefined);
+            userSubscribedToLoader.prime(user.id, subscribedUsers);
+          }
+
+          if (needsSubscribedToUser && user.subscribedToUser) {
+            const subscriberUsers = user.subscribedToUser
+              .map((sub) => userMap.get(sub.subscriberId))
+              .filter((u): u is User => u !== undefined);
+            subscribedToUserLoader.prime(user.id, subscriberUsers);
+          }
+        });
+      }
 
       return infos.map(() => users);
     },
